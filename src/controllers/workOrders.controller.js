@@ -39,44 +39,92 @@ const createWorkOrder = async (req, res, next) => {
 };
 
 const searchAndAssignmentWorkOrder = async (req, res, next) => {
-    const { id } = req.params;// Aquí se puede acceder al ID de la orden de trabajo desde los parámetros de la URL
-    try { // Aquí se puede acceder al ID de la orden de trabajo desde los parámetros de la URL
-        const workOrderResult = await pool.query("SELECT * FROM work_orders WHERE id = $1", [id]); // Busca la orden de trabajo por su ID en la base de datos
-        if (workOrderResult.rows.length === 0) { // Si no se encuentra la orden de trabajo, devuelve un error
-            return res.status(404).json({ message: "Orden de trabajo no encontrada" });
-        }
+  const { id } = req.params;
+  const client = await pool.connect();
 
-        const workOrder = workOrderResult.rows[0]; // Guarda la orden de trabajo encontrada en una variable para su posterior uso
-        if (workOrder.consultant_id) { // Verifica si la orden de trabajo ya tiene un consultor asignado
-            return res.status(400).json({ message: "La orden de trabajo ya está asignada a un consultor" });
-        }
-        
-        const consultantResult = await pool.query( // Busca un consultor disponible que tenga suficiente capacidad para asumir la orden de trabajo
-            "SELECT * FROM consultants WHERE current_workload + $1 <= max_hours_per_week ORDER BY current_workload ASC LIMIT 1", // Ordena los consultores por su carga de trabajo actual de forma ascendente y limita la búsqueda a un solo consultor
-            [workOrder.estimated_hours] // Utiliza las horas estimadas de la orden de trabajo para verificar si el consultor tiene suficiente capacidad para asumirla
-        )
-        if (consultantResult.rows.length === 0) { // Si no se encuentra un consultor disponible, devuelve un error
-            return res.status(400).json({ message: "No hay consultores disponibles para asignar esta orden de trabajo" });
-        }
+  try {
+    await client.query("BEGIN");
 
-        const consultant = consultantResult.rows[0]; // Si se encuentra un consultor disponible, asigna la orden de trabajo a ese consultor y actualiza su carga de trabajo
-        const assigResult = await pool.query( // Asigna la orden de trabajo al consultor encontrado y actualiza su carga de trabajo
-            "UPDATE work_orders SET consultant_id = $1, status = 'asignado' WHERE id = $2 RETURNING *",
-            [consultant.id, id]
-        );
-        await pool.query(// Actualiza la carga de trabajo del consultor sumando las horas estimadas de la orden de trabajo asignada
-            "UPDATE consultants SET current_workload = current_workload + $1 WHERE id = $2", // Actualiza la carga de trabajo del consultor sumando las horas estimadas de la orden de trabajo asignada
-            [workOrder.estimated_hours, consultant.id] // Utiliza las horas estimadas de la orden de trabajo para actualizar la carga de trabajo del consultor
-        );
-        res.json({
-            message: "Orden de trabajo asignada exitosamente",
-            workOrder: assigResult.rows[0],
-            consultant: consultant
-        });
-            }
-        catch (error) { next(error) } // Devuelve la orden de trabajo actualizada con el consultor asignado
+    const workOrderResult = await client.query(
+      "SELECT * FROM work_orders WHERE id = $1 FOR UPDATE",
+      [id]
+    );
 
+    if (workOrderResult.rows.length === 0) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ message: "Orden de trabajo no encontrada" });
     }
+
+    const workOrder = workOrderResult.rows[0];
+
+    if (!workOrder.estimated_hours || workOrder.estimated_hours <= 0) {
+      await client.query("ROLLBACK");
+      return res.status(400).json({
+        message: "La orden de trabajo no tiene horas estimadas válidas",
+      });
+    }
+
+    if (workOrder.consultant_id) {
+      await client.query("ROLLBACK");
+      return res.status(400).json({
+        message: "La orden de trabajo ya está asignada a un consultor",
+      });
+    }
+
+    const consultantResult = await client.query(
+      `SELECT *
+       FROM consultants
+       WHERE current_workload + $1 <= max_hours_per_week
+       ORDER BY current_workload ASC
+       LIMIT 1
+       FOR UPDATE`,
+      [workOrder.estimated_hours]
+    );
+
+    if (consultantResult.rows.length === 0) {
+      await client.query("ROLLBACK");
+      return res.status(400).json({
+        message: "No hay consultores disponibles para asignar esta orden de trabajo",
+      });
+    }
+
+    const consultant = consultantResult.rows[0];
+
+    const assignResult = await client.query(
+      `UPDATE work_orders
+       SET consultant_id = $1, status = 'asignado'
+       WHERE id = $2
+       RETURNING *`,
+      [consultant.id, id]
+    );
+
+    const updatedConsultantResult = await client.query(
+      `UPDATE consultants
+       SET current_workload = current_workload + $1
+       WHERE id = $2
+       RETURNING *`,
+      [workOrder.estimated_hours, consultant.id]
+    );
+
+    await client.query("COMMIT");
+
+    res.json({
+      message: "Orden de trabajo asignada correctamente",
+      workOrder: assignResult.rows[0],
+      consultant: updatedConsultantResult.rows[0],
+    });
+  } catch (error) {
+    try {
+      await client.query("ROLLBACK");
+    } catch (rollbackError) {
+      console.error("Rollback error:", rollbackError);
+    }
+
+    next(error);
+  } finally {
+    client.release();
+  }
+};
 
 
 
