@@ -26,11 +26,15 @@ const getTicketById = async (req, res, next) => {
 };
 
 const createTicket = async (req, res, next) => {
- const {name, specialty}  =  req.body; // Aquí se puede acceder a los datos enviados en el cuerpo de la solicitud
+ const { external_ticket_id,
+    client_name,
+    subject,
+    description,
+    priority,}  =  req.body; // Aquí se puede acceder a los datos enviados en el cuerpo de la solicitud
  try {
      const result = await pool.query(
-         "INSERT INTO tickets (name, specialty) VALUES ($1, $2) RETURNING *",
-         [name, specialty]
+         "INSERT INTO tickets (external_ticket_id, client_name, subject, description, priority) VALUES ($1, $2, $3, $4, $5) RETURNING *",
+         [external_ticket_id, client_name, subject, description, priority]
      );
      res.json(result.rows[0]); // Devuelve el ticket recién creado como respuesta
  } catch (error) {
