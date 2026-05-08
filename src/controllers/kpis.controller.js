@@ -78,17 +78,21 @@ const getWorkloadAllConsultants = async (req, res, next) => {
 };
 const getSummary = async (req, res, next) => {
   try {
-    
-    const result = await pool.query( // Consulta SQL para obtener un resumen de los KPIs, incluyendo el total de consultores, el total de órdenes de trabajo, el total de órdenes de trabajo pendientes y el total de órdenes de trabajo asignadas
+    const result = await pool.query(
       `SELECT 
         (SELECT COUNT(*) FROM consultants) AS total_consultants,
         (SELECT COUNT(*) FROM work_orders) AS total_work_orders,
         (SELECT COUNT(*) FROM work_orders WHERE status = 'pendiente') AS pending_work_orders,
-        (SELECT COUNT(*) FROM work_orders WHERE status = 'asignado') AS assigned_work_orders`
-      
+        (SELECT COUNT(*) FROM work_orders WHERE status = 'asignado') AS assigned_work_orders,
+        (SELECT COUNT(*) FROM work_orders WHERE status = 'en_progreso') AS in_progress_work_orders,
+        (SELECT COUNT(*) FROM work_orders WHERE status = 'completado') AS completed_work_orders,
+        (SELECT COUNT(*) FROM work_orders WHERE status = 'cancelado') AS cancelled_work_orders,
+        (SELECT COUNT(*) FROM tickets) AS total_tickets,
+        (SELECT COUNT(*) FROM tickets WHERE status = 'abierto') AS open_tickets,
+        (SELECT COUNT(*) FROM tickets WHERE status = 'convertido') AS converted_tickets`
     );
 
-    res.json(result.rows[0]); // Devolver el resumen como respuesta en formato JSON
+    res.json(result.rows[0]);
   } catch (error) {
     next(error);
   }

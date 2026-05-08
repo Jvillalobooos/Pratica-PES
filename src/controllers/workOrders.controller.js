@@ -1,13 +1,46 @@
 const pool = require('../db');
 
 const getAllworkOrders = async (req, res, next) => {
-    try {
-        const result = await pool.query("SELECT * FROM work_orders");
-        res.json(result.rows);
-    } catch (error) {
-        next(error);
+  try {
+    const { status, priority, consultant_id, search } = req.query;
+
+    let query = "SELECT * FROM work_orders";
+    const conditions = [];
+    const values = [];
+
+    if (status) {
+      values.push(status);
+      conditions.push(`status = $${values.length}`);
     }
-    
+
+    if (priority) {
+      values.push(priority);
+      conditions.push(`priority = $${values.length}`);
+    }
+
+    if (consultant_id) {
+      values.push(consultant_id);
+      conditions.push(`consultant_id = $${values.length}`);
+    }
+
+    if (search) {
+      values.push(`%${search}%`);
+      conditions.push(
+        `(title ILIKE $${values.length} OR description ILIKE $${values.length})`
+      );
+    }
+
+    if (conditions.length > 0) {
+      query += ` WHERE ${conditions.join(" AND ")}`;
+    }
+
+    query += " ORDER BY id ASC";
+
+    const result = await pool.query(query, values);
+    res.json(result.rows);
+  } catch (error) {
+    next(error);
+  }
 };
 
 const getWorkOrderById = async (req, res, next) => {
