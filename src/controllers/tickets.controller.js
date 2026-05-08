@@ -106,12 +106,56 @@ const convertTicketToWorkOrder = async (req, res, next) => {
   } finally {
     client.release();
   }
+
+ 
+};
+
+const getTicketTracking = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+
+    const result = await pool.query(
+      `SELECT 
+        t.id AS ticket_id,
+        t.external_ticket_id,
+        t.client_name,
+        t.subject,
+        t.description AS ticket_description,
+        t.priority AS ticket_priority,
+        t.status AS ticket_status,
+        t.created_at AS ticket_created_at,
+
+        w.id AS work_order_id,
+        w.title AS work_order_title,
+        w.description AS work_order_description,
+        w.priority AS work_order_priority,
+        w.status AS work_order_status,
+        w.estimated_hours,
+
+        c.id AS consultant_id,
+        c.name AS consultant_name,
+        c.specialty AS consultant_specialty
+       FROM tickets t
+       LEFT JOIN work_orders w ON t.work_order_id = w.id
+       LEFT JOIN consultants c ON w.consultant_id = c.id
+       WHERE t.id = $1`,
+      [id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: "Ticket no encontrado" });
+    }
+
+    res.json(result.rows[0]);
+  } catch (error) {
+    next(error);
+  }
 };
 
 module.exports = {
     getAllTickets,
     getTicketById,
     createTicket,
-    convertTicketToWorkOrder
-
+    convertTicketToWorkOrder,
+    getTicketTracking
 }

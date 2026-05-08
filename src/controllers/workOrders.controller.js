@@ -126,12 +126,111 @@ const searchAndAssignmentWorkOrder = async (req, res, next) => {
   }
 };
 
+const updateStatus = async (req, res, next) => {
+  const { id } = req.params;
+  const { status } = req.body;
 
+  const allowedStatuses = [
+    "pendiente",
+    "asignado",
+    "en_progreso",
+    "completado",
+    "cancelado",
+  ];
+
+  const allowedTransitions = {
+    pendiente: ["asignado", "cancelado"],
+    asignado: ["en_progreso", "cancelado"],
+    en_progreso: ["completado", "cancelado"],
+    completado: [],
+    cancelado: [],
+  };
+
+  const client = await pool.connect();
+
+  try {
+    if (!status) {
+      return res.status(400).json({ message: "El estado es requerido" });
+    }
+
+    if (!allowedStatuses.includes(status)) {
+      return res.status(400).json({ message: "Estado no válido" });
+    }
+
+    await client.query("BEGIN");
+
+    const workOrderResult = await client.query(
+      "SELECT * FROM work_orders WHERE id = $1 FOR UPDATE",
+      [id]
+    );
+
+    if (workOrderResult.rows.length === 0) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ message: "Orden de trabajo no encontrada" });
+    }
+
+    const workOrder = workOrderResult.rows[0];
+    const currentStatus = workOrder.status;
+
+    if (!allowedTransitions[currentStatus]?.includes(status)) {
+      await client.query("ROLLBACK");
+      return res.status(400).json({
+        message: `Transición inválida: no se puede cambiar de ${currentStatus} a ${status}`,
+      });
+    }
+
+    const updateResult = await client.query(
+      `UPDATE work_orders
+       SET status = $1
+       WHERE id = $2
+       RETURNING *`,
+      [status, id]
+    );
+
+    const shouldReleaseWorkload =
+      workOrder.consultant_id &&
+      ["completado", "cancelado"].includes(status) &&
+      !["completado", "cancelado"].includes(currentStatus);
+
+    let updatedConsultant = null;
+
+    if (shouldReleaseWorkload) {
+      const consultantResult = await client.query(
+        `UPDATE consultants
+         SET current_workload = GREATEST(current_workload - $1, 0)
+         WHERE id = $2
+         RETURNING *`,
+        [workOrder.estimated_hours, workOrder.consultant_id]
+      );
+
+      updatedConsultant = consultantResult.rows[0];
+    }
+
+    await client.query("COMMIT");
+
+    res.json({
+      message: "Estado de la orden de trabajo actualizado correctamente",
+      workOrder: updateResult.rows[0],
+      consultant: updatedConsultant,
+    });
+  } catch (error) {
+    try {
+      await client.query("ROLLBACK");
+    } catch (rollbackError) {
+      console.error("Rollback error:", rollbackError);
+    }
+
+    next(error);
+  } finally {
+    client.release();
+  }
+};
 
 
 module.exports = {
     getAllworkOrders,
     getWorkOrderById,
     createWorkOrder,
-    searchAndAssignmentWorkOrder
+    searchAndAssignmentWorkOrder,
+    updateStatus,
 }
